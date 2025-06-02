@@ -22,6 +22,9 @@ typedef void (*op_ex_f)(uint16_t instruction);
 // LC3 operates with 16 bit registers, so we need to extend IMM5 to 16 bits
 // preserving the sign
 #define SEXTIMM(i) sext(IMM(i),5)
+// Offset is encoded in the last 9 bits of the instruction for ld
+#define POFF9(i) sext((i & 0x1FF), 9)
+#define POFF(i) sext((i & 0x3F), 6)
 
 static inline uint16_t sext(uint16_t n, int b) {
 	return ((n >> (b - 1)) & 1) ?		// if the bth bit of n is 1 (number is negative)
@@ -72,7 +75,69 @@ static inline void memwrite(uint16_t address, uint16_t value) { memory[address] 
 static inline void add(uint16_t i) {
 	registers[DR(i)] = registers[SR1(i)] +
 		(FIMM(i) ?			// If the fifth bit is 1
-   			SEXTIMM(i):		// sign extend IMM5 and add to SR1 (add2)
+   			SEXTIMM(i) :		// sign extend IMM5 and add to SR1 (add2)
    			registers[SR2(i)]);	// else add the value of SR2 to SR1 (add1)
 	uf(DR(i));
+}
+
+// and instruction is similar to add and has two version, usage is based on
+// value of fifth bit of the instruction
+static inline void and(uint16_t i) {
+	registers[DR(i)] = registers[SR1(i)] &
+		(FIMM(i) ?
+   			SEXTIMM(i) :
+   			registers[SR2(i)]);
+	uf(DR(i));
+}
+
+// not performs a bitwise complement on SR1 and stores the value in DR1
+static inline void not(uint16_t i) {
+	registers[DR(i)] = ~registers[SR1(i)];
+	uf(DR(i));
+}
+
+// ld is used to load data from main memory to a destination register.
+// The memory location is obtained by adding an offset to the RPC register, ld doesn't
+// modify the RPC
+static inline void ld(uint16_t i) {
+	registers[DR(i)] = memread(registers[RPC] + POFF9(i));
+	uf(DR(i));
+}
+
+// ldi (load indirect) is used to load data into registers, using intermediary addresses to access
+// fat away memory areas
+static inline void ldi(uint16_t i) {
+	registers[DR(i)] = memread(memread(registers[RPC] + POFF9(i)));
+	uf(DR(i));
+}
+
+// ldr (load base + offset) is used to load data into registers, it uses a different base (memory kept in a register)
+// than RPC
+// The macro SR1 is used to extract BASER from the instruction as they have the same bit positions
+static inline void ldr(uint16_t i) {
+	registers[DR(i)] = memread(registers[SR1(i)] + POFF(i));
+	uf(DR(i));
+}
+
+// lea (load effective address) is used to load memory addresses into registers
+static inline void lea(uint16_t i) {
+	registers[DR(i)] = registers[RPC] + POFF9(i);
+	uf(DR(i));
+}
+
+// st is used to store the value of a given register to a memory location
+// Flags are not updated because no computation is done on registers
+static inline void st(uint16_t i) {
+	memwrite(registers[RPC] + POFF9(i), registers[DR(i)]);
+}
+
+// sti (store indirect) uses an intermediary address from the main memory to intermediate
+// the write, the secondary address contains the actual memory location where it writes
+static inline void sti(uint16_t i) {
+	memwrite(memread(registers[RPC] + POFF9(i)), registers[DR(i)]);
+}
+
+// str (store base + offset) uses a BASER a reference register, to which we add the offset
+static inline void str(uint16_t i) {
+	memwrite(registers[SR1(i)] + POFF(i), registers[DR(i)]);
 }
