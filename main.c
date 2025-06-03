@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // Instructions have the same size as the memory, 16 bits.
 // The first 4 bits are the OpCode of the instruction, and then depending
@@ -208,3 +209,31 @@ static inline void trap(uint16_t i) { trp_ex[TRP(i) - trp_offset](); }
 op_ex_f op_ex[NOPS] = {
 	br, add, ld, st, jsr, and, ldr, str, rti, not, ldi, sti, jmp, res, lea, trap
 };
+
+void ld_img(char *fname, uint16_t offset) {
+	FILE *in = fopen(fname, "rb");
+	if (in == NULL) {
+		fprintf(stderr, "Cannot open file %s\n", fname);
+		exit(1);
+	}
+
+	uint16_t *ptr = memory + PC_START + offset;
+	fread(ptr, sizeof(uint16_t), (UINT16_MAX - PC_START), in);
+	fclose(in);
+}
+
+void start(uint16_t offset) {
+	registers[RPC] = PC_START + offset;
+	while (running) {
+		// Extract instructions from the memory location pointed by RPC
+		// and auto increment the RPC
+		uint16_t i = memread(registers[RPC]++);
+		op_ex[OPC(i)](i);
+	}
+}
+
+int main(int argc, char* argv[]) {
+	ld_img(argv[1], 0x0);
+	start(0x0);
+	return 0;
+}
