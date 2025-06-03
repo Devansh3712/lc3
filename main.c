@@ -1,4 +1,6 @@
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 // Instructions have the same size as the memory, 16 bits.
 // The first 4 bits are the OpCode of the instruction, and then depending
@@ -6,9 +8,8 @@
 // Because OpCode are represented in 4 bits, the maximum number of instructions
 // we can encode is 16.
 #define NOPS 16
+// OpCode of the instruction is represented by bits 15-12
 #define OPC(i) (i >> 12)
-typedef void (*op_ex_f)(uint16_t instruction);
-
 #define FIMM(i) ((i >> 5) & 1)
 // Destination Register (DR) is represented by bits 11-9
 #define DR(i) ((i >> 9) & 0x7)
@@ -18,19 +19,28 @@ typedef void (*op_ex_f)(uint16_t instruction);
 #define SR2(i) (i & 0x7)
 // IMM5 is represented by bits 4-0
 #define IMM(i) (i & 0x1F)
+#define FL(i) ((i >> 11) & 1)
+// NZP flags represented by bits 11-9
+#define FCND(i) ((i >> 9) & 0x7)
+// TRAP vector represented by bits 7-0
+#define TRP(i) (i & 0xFF)
 // Sign extension for 5 bit immediate values
 // LC3 operates with 16 bit registers, so we need to extend IMM5 to 16 bits
 // preserving the sign
 #define SEXTIMM(i) sext(IMM(i),5)
-// Offset is encoded in the last 9 bits of the instruction for ld
-#define POFF9(i) sext((i & 0x1FF), 9)
 #define POFF(i) sext((i & 0x3F), 6)
+#define POFF9(i) sext((i & 0x1FF), 9)
+#define POFF11(i) sext((i & 0x7FF), 11)
+
+typedef void (*op_ex_f)(uint16_t instruction);
+typedef void (*trp_ex_f)();
 
 static inline uint16_t sext(uint16_t n, int b) {
 	return ((n >> (b - 1)) & 1) ?		// if the bth bit of n is 1 (number is negative)
 		(n | (0xFFFF << b)) : n;	// fill up remaining bits with 1s else return the number
 }
 
+bool running = true;
 // Lower memory (0x0000 to 0x2FFF) is often reserved for system use,
 // interrupt vectors and hardware I/O mapping
 uint16_t PC_START = 0x3000;
@@ -111,9 +121,10 @@ static inline void ldi(uint16_t i) {
 	uf(DR(i));
 }
 
-// ldr (load base + offset) is used to load data into registers, it uses a different base (memory kept in a register)
-// than RPC
-// The macro SR1 is used to extract BASER from the instruction as they have the same bit positions
+// ldr (load base + offset) is used to load data into registers, it uses a different base
+// (memory kept in a register) than RPC
+// The macro SR1 is used to extract BASER (base register) from the instruction as they
+// have the same bit positions (8-6)
 static inline void ldr(uint16_t i) {
 	registers[DR(i)] = memread(registers[SR1(i)] + POFF(i));
 	uf(DR(i));
@@ -141,3 +152,59 @@ static inline void sti(uint16_t i) {
 static inline void str(uint16_t i) {
 	memwrite(registers[SR1(i)] + POFF(i), registers[DR(i)]);
 }
+
+// jmp (jump) makes our RPC jump to the location specified by the contents of BASER
+static inline void jmp(uint16_t i) { registers[RPC] = registers[SR1(i)]; }
+
+// jsr (jump to subroutine) is a control flow instruction that helps in implementing
+// subroutines
+// The eleventh bit of the instruction tells which version of jsr to use
+static inline void jsr(uint16_t i) {
+	registers[R7] = registers[RPC];
+	registers[RPC] = (FL(i) ?
+			registers[RPC] + POFF11(i):	// RPC + offset
+			registers[SR1(i)]);		// base register
+}
+
+// br is similar to jsr, but branching only happens when some conditions are met
+static inline void br(uint16_t i) {
+	if (registers[RCND] & FCND(i))
+		registers[RPC] += POFF9(i);	// if conditions are met, branch to offset
+}
+
+static inline void rti(uint16_t i) {}	// unused
+static inline void res(uint16_t i) {}	// unused
+
+static inline void tgetc() { registers[R0] = getchar(); }
+static inline void tout() { fprintf(stdout, "%c", (char)registers[R0]); }
+
+// Iterate through the memory location starting at R0 until 0x0000 is found
+// and print each character in order
+static inline void tputs() {
+	uint16_t *ptr = memory + registers[R0];
+	while (*ptr) {
+		fprintf(stdout, "%c", (char)*ptr);
+		ptr++;
+	}
+}
+
+static inline void tin() {
+	registers[R0] = getchar();
+	fprintf(stdout, "%c", registers[R0]);
+}
+
+static inline void thalt() { running = false; }
+static inline void tinu16() { fscanf(stdin, "%hu", &registers[R0]); }
+static inline void toutu16() { fprintf(stdout, "%hu\n", registers[R0]); }
+static inline void tputsp() { /* Not implemented */ }
+
+enum { trp_offset = 0x20 };
+trp_ex_f trp_ex[8] = {
+	tgetc, tout, tputs, tin, tputsp, thalt, tinu16, toutu16
+};
+
+static inline void trap(uint16_t i) { trp_ex[TRP(i) - trp_offset](); }
+
+op_ex_f op_ex[NOPS] = {
+	br, add, ld, st, jsr, and, ldr, str, rti, not, ldi, sti, jmp, res, lea, trap
+};
