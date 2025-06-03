@@ -1,9 +1,9 @@
 sum:
-	gcc -Wall sum.c -o sum.out
+	gcc -Wall src/sum.c -o sum.out
 	./sum.out
 
 vm:
-	gcc -Wall main.c -o vm.out
+	gcc -Wall src/vm.c src/vm_debug.c -o vm.out
 
 clean:
 	rm *.out *.obj

@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "../include/vm_debug.h"
+
 // Instructions have the same size as the memory, 16 bits.
 // The first 4 bits are the OpCode of the instruction, and then depending
 // on the instruction there are parameters encoded in the remaining 12 bits.
@@ -234,6 +236,12 @@ void start(uint16_t offset) {
 
 int main(int argc, char* argv[]) {
 	ld_img(argv[1], 0x0);
+	fprintf(stdout, "Occupied memory after program load:\n");
+	fprintf_memory_nonzero(stdout, memory, UINT16_MAX);
 	start(0x0);
+	fprintf(stdout, "Occupied memory after program execution:\n");
+	fprintf_memory_nonzero(stdout, memory, UINT16_MAX);
+	fprintf(stdout, "Registers after program execution:\n");
+	fprintf_register_all(stdout, registers, RCNT);
 	return 0;
 }
